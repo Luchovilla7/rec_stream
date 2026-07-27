@@ -1,0 +1,6 @@
+{
+  "name": "REC_STREAM Screen Recorder",
+  "description": "Bento Grid screen recorder with camera overlay, webm video audio mixing, chunked upload, and instant video share links.",
+  "requestFramePermissions": ["camera", "microphone", "display-capture"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
