@@ -24,8 +24,13 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 pb-2 border-b border-zinc-800/60">
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center shadow-lg shadow-orange-600/20">
-          <div className="w-3.5 h-3.5 bg-white rounded-full animate-pulse shadow-[0_0_10px_#ffffff]" />
+        <div className="w-10 h-10 rounded-xl overflow-hidden border border-orange-500/30 shadow-lg shadow-orange-600/20 bg-zinc-900 flex items-center justify-center relative group">
+          <img
+            src="/favicon.jpg"
+            alt="REC_STREAM Logo"
+            className="w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+          />
         </div>
         <div>
           <div className="flex items-center gap-2">
