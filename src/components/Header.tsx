@@ -1,6 +1,7 @@
 import React from 'react';
 import { Database, ShieldAlert, Sparkles, HardDrive, Settings, ExternalLink } from 'lucide-react';
 import { SupabaseConfig } from '../types';
+import logoImg from '../assets/images/rec_stream_favicon_1785165492980.jpg';
 
 interface HeaderProps {
   supabaseConfig: SupabaseConfig;
@@ -26,7 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-xl overflow-hidden border border-orange-500/30 shadow-lg shadow-orange-600/20 bg-zinc-900 flex items-center justify-center relative group">
           <img
-            src="/favicon.jpg"
+            src={logoImg}
             alt="REC_STREAM Logo"
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"
