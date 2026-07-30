@@ -196,21 +196,6 @@ export async function uploadRecordingInChunks(
   return newRecording;
 }
 
-async function saveRecordingToServer(rec: Recording): Promise<void> {
-  try {
-    await fetch('/api/recordings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(rec),
-    });
-  } catch (e) {
-    // Save to localStorage as secondary fallback
-    const list = getLocalRecordingsFromStore();
-    list.unshift(rec);
-    localStorage.setItem('rec_stream_local_list', JSON.stringify(list));
-  }
-}
-
 export function getLocalRecordingsFromStore(): Recording[] {
   try {
     const raw = localStorage.getItem('rec_stream_local_list');
@@ -220,10 +205,64 @@ export function getLocalRecordingsFromStore(): Recording[] {
   }
 }
 
-export async function fetchAllRecordings(): Promise<Recording[]> {
-  const supabase = getSupabaseClient();
-  let supabaseRecordings: Recording[] = [];
+export function saveLocalRecordingToStore(rec: Recording): void {
+  const list = getLocalRecordingsFromStore();
+  const existingIdx = list.findIndex((r) => r.id === rec.id);
+  if (existingIdx >= 0) {
+    list[existingIdx] = rec;
+  } else {
+    list.unshift(rec);
+  }
+  localStorage.setItem('rec_stream_local_list', JSON.stringify(list));
+}
 
+async function saveRecordingToServer(rec: Recording): Promise<void> {
+  // Always persist locally in browser localStorage as first line of defense
+  saveLocalRecordingToStore(rec);
+
+  try {
+    await fetch('/api/recordings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rec),
+    });
+  } catch (e) {
+    console.warn('Server save note:', e);
+  }
+}
+
+export async function fetchAllRecordings(): Promise<Recording[]> {
+  const map = new Map<string, Recording>();
+
+  // 1. Get browser localStorage items first
+  const localList = getLocalRecordingsFromStore();
+  localList.forEach((r) => map.set(r.id, r));
+
+  // 2. Get server recordings
+  let serverList: Recording[] = [];
+  try {
+    const res = await fetch('/api/recordings');
+    if (res.ok) {
+      serverList = await res.json();
+      serverList.forEach((r) => map.set(r.id, r));
+
+      // Auto-sync any local recordings to server if server was missing them
+      localList.forEach((lr) => {
+        if (!serverList.some((sr) => sr.id === lr.id)) {
+          fetch('/api/recordings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(lr),
+          }).catch(() => {});
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('Server fetch note:', e);
+  }
+
+  // 3. Get Supabase recordings if configured
+  const supabase = getSupabaseClient();
   if (supabase) {
     try {
       const { data, error } = await supabase
@@ -232,34 +271,27 @@ export async function fetchAllRecordings(): Promise<Recording[]> {
         .order('created_at', { ascending: false });
 
       if (!error && data) {
-        supabaseRecordings = data.map((item: any) => ({
-          ...item,
-          file_size_mb: item.file_size_mb || 15.4,
-          video_url: item.video_url || `${getStoredSupabaseConfig().url}/storage/v1/object/public/recordings/${item.storage_path.replace('recordings/', '')}`,
-        }));
+        data.forEach((item: any) => {
+          const rec: Recording = {
+            ...item,
+            file_size_mb: item.file_size_mb || 15.4,
+            video_url: item.video_url || `${getStoredSupabaseConfig().url}/storage/v1/object/public/recordings/${item.storage_path.replace('recordings/', '')}`,
+          };
+          map.set(rec.id, rec);
+        });
       }
     } catch (e) {
       console.warn('Supabase fetch error:', e);
     }
   }
 
-  try {
-    const res = await fetch('/api/recordings');
-    if (res.ok) {
-      const serverRecordings: Recording[] = await res.json();
-      // Combine Supabase and server recordings without duplicates
-      const map = new Map<string, Recording>();
-      supabaseRecordings.forEach((r) => map.set(r.id, r));
-      serverRecordings.forEach((r) => map.set(r.id, r));
-      const combined = Array.from(map.values());
-      combined.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      return combined;
-    }
-  } catch {
-    // Return local list
-  }
+  const combined = Array.from(map.values());
+  combined.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-  return getLocalRecordingsFromStore();
+  // Save the complete merged set back into localStorage
+  localStorage.setItem('rec_stream_local_list', JSON.stringify(combined));
+
+  return combined;
 }
 
 export async function fetchRecordingBySlug(slug: string): Promise<Recording | null> {
