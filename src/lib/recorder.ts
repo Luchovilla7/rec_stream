@@ -35,6 +35,9 @@ export class RecorderEngine {
   private timerInterval: number | null = null;
   private elapsedSeconds: number = 0;
 
+  private isDrawing = false;
+  private drawIntervalId: number | null = null;
+
   private cameraConfig: CameraConfig;
   private onAudioLevels?: (levels: AudioLevels) => void;
   private onTimerTick?: (seconds: number) => void;
@@ -92,7 +95,7 @@ export class RecorderEngine {
     // Handle screen share stop by user from browser UI bar
     if (this.screenVideoTrack) {
       this.screenVideoTrack.onended = () => {
-        this.stopRecording();
+        this.stopRecording().catch(() => {});
       };
     }
 
@@ -125,20 +128,39 @@ export class RecorderEngine {
       }
     }
 
-    // 3. Setup video elements for canvas rendering
+    // Create DOM container for hidden video rendering
+    let hiddenContainer = document.getElementById('rec-stream-hidden-container');
+    if (!hiddenContainer) {
+      hiddenContainer = document.createElement('div');
+      hiddenContainer.id = 'rec-stream-hidden-container';
+      hiddenContainer.style.position = 'fixed';
+      hiddenContainer.style.top = '-9999px';
+      hiddenContainer.style.left = '-9999px';
+      hiddenContainer.style.width = '1px';
+      hiddenContainer.style.height = '1px';
+      hiddenContainer.style.opacity = '0.001';
+      hiddenContainer.style.pointerEvents = 'none';
+      hiddenContainer.style.zIndex = '-9999';
+      document.body.appendChild(hiddenContainer);
+    }
+
+    // 3. Setup video elements attached to DOM for frame decoding
     this.screenVideoEl = document.createElement('video');
     this.screenVideoEl.srcObject = new MediaStream([this.screenVideoTrack!]);
     this.screenVideoEl.muted = true;
     this.screenVideoEl.playsInline = true;
-    await this.screenVideoEl.play().catch(() => {});
+    hiddenContainer.appendChild(this.screenVideoEl);
 
     if (this.cameraVideoTrack) {
       this.cameraVideoEl = document.createElement('video');
       this.cameraVideoEl.srcObject = new MediaStream([this.cameraVideoTrack]);
       this.cameraVideoEl.muted = true;
       this.cameraVideoEl.playsInline = true;
+      hiddenContainer.appendChild(this.cameraVideoEl);
       await this.cameraVideoEl.play().catch(() => {});
     }
+
+    await this.screenVideoEl.play().catch(() => {});
 
     // 4. Setup canvas compositor
     this.canvas = document.createElement('canvas');
@@ -148,7 +170,16 @@ export class RecorderEngine {
     this.canvas.height = targetHeight;
     this.ctx = this.canvas.getContext('2d');
 
-    // Start drawing compositor loop
+    this.screenVideoEl.onloadedmetadata = () => {
+      if (this.canvas && this.screenVideoEl) {
+        if (this.screenVideoEl.videoWidth > 0 && this.screenVideoEl.videoHeight > 0) {
+          this.canvas.width = this.screenVideoEl.videoWidth;
+          this.canvas.height = this.screenVideoEl.videoHeight;
+        }
+      }
+    };
+
+    // Start multi-driver canvas loop
     this.startCanvasDrawLoop();
 
     // 5. Setup AudioContext audio mixer
@@ -228,16 +259,19 @@ export class RecorderEngine {
   }
 
   private startCanvasDrawLoop() {
+    this.isDrawing = true;
+
     const draw = () => {
-      if (!this.canvas || !this.ctx || !this.screenVideoEl) return;
+      if (!this.isDrawing || !this.canvas || !this.ctx || !this.screenVideoEl) return;
 
       const w = this.canvas.width;
       const h = this.canvas.height;
 
-      // Draw Screen Video
+      // Fill background
       this.ctx.fillStyle = '#09090b';
       this.ctx.fillRect(0, 0, w, h);
 
+      // Draw Screen Video
       if (this.screenVideoEl.readyState >= 2) {
         this.ctx.drawImage(this.screenVideoEl, 0, 0, w, h);
       }
@@ -309,11 +343,33 @@ export class RecorderEngine {
 
         this.ctx.restore();
       }
-
-      this.animFrameId = requestAnimationFrame(draw);
     };
 
-    draw();
+    // Driver 1: requestAnimationFrame for high FPS when tab is active
+    const rafLoop = () => {
+      if (!this.isDrawing) return;
+      draw();
+      this.animFrameId = requestAnimationFrame(rafLoop);
+    };
+    rafLoop();
+
+    // Driver 2: requestVideoFrameCallback on screenVideoEl (fires on every incoming video frame)
+    const rvfcLoop = () => {
+      if (!this.isDrawing || !this.screenVideoEl) return;
+      draw();
+      if ('requestVideoFrameCallback' in this.screenVideoEl) {
+        (this.screenVideoEl as any).requestVideoFrameCallback(rvfcLoop);
+      }
+    };
+    if (this.screenVideoEl && 'requestVideoFrameCallback' in this.screenVideoEl) {
+      (this.screenVideoEl as any).requestVideoFrameCallback(rvfcLoop);
+    }
+
+    // Driver 3: setInterval backup timer (30fps) for active drawing in background tabs
+    if (this.drawIntervalId) clearInterval(this.drawIntervalId);
+    this.drawIntervalId = window.setInterval(() => {
+      draw();
+    }, 1000 / 30);
   }
 
   public async startRecording(): Promise<void> {
@@ -321,8 +377,25 @@ export class RecorderEngine {
       await this.startPreviewStreams();
     }
 
-    const canvasStream = this.canvas!.captureStream(30); // 30fps
-    const combinedTracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
+    const combinedTracks: MediaStreamTrack[] = [];
+
+    // If camera bubble overlay is enabled, record composite canvas track.
+    // If camera is disabled, use direct native display screen track for 100% hardware fidelity.
+    if (this.cameraConfig.enabled && this.canvas) {
+      const canvasStream = this.canvas.captureStream(30);
+      const canvasTrack = canvasStream.getVideoTracks()[0];
+      if (canvasTrack) {
+        combinedTracks.push(canvasTrack);
+      }
+    } else if (this.screenVideoTrack) {
+      combinedTracks.push(this.screenVideoTrack);
+    } else if (this.canvas) {
+      const canvasStream = this.canvas.captureStream(30);
+      const canvasTrack = canvasStream.getVideoTracks()[0];
+      if (canvasTrack) {
+        combinedTracks.push(canvasTrack);
+      }
+    }
 
     if (this.audioDestination) {
       const audioTracks = this.audioDestination.stream.getAudioTracks();
@@ -345,7 +418,7 @@ export class RecorderEngine {
     this.recordedChunks = [];
     this.mediaRecorder = new MediaRecorder(finalStream, {
       mimeType,
-      videoBitsPerSecond: 3000000, // 3Mbps quality
+      videoBitsPerSecond: 4000000, // 4Mbps quality
     });
 
     this.mediaRecorder.ondataavailable = (e) => {
@@ -414,6 +487,13 @@ export class RecorderEngine {
   }
 
   public cleanup() {
+    this.isDrawing = false;
+
+    if (this.drawIntervalId) {
+      clearInterval(this.drawIntervalId);
+      this.drawIntervalId = null;
+    }
+
     if (this.animFrameId) {
       cancelAnimationFrame(this.animFrameId);
       this.animFrameId = null;
@@ -447,11 +527,22 @@ export class RecorderEngine {
 
     if (this.screenVideoEl) {
       this.screenVideoEl.srcObject = null;
+      if (this.screenVideoEl.parentNode) {
+        this.screenVideoEl.parentNode.removeChild(this.screenVideoEl);
+      }
       this.screenVideoEl = null;
     }
     if (this.cameraVideoEl) {
       this.cameraVideoEl.srcObject = null;
+      if (this.cameraVideoEl.parentNode) {
+        this.cameraVideoEl.parentNode.removeChild(this.cameraVideoEl);
+      }
       this.cameraVideoEl = null;
+    }
+
+    const hiddenContainer = document.getElementById('rec-stream-hidden-container');
+    if (hiddenContainer) {
+      hiddenContainer.remove();
     }
   }
 }
