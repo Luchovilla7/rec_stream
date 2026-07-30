@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Play, Eye, Clock, Download, Share2, Trash2, ArrowLeft, Check, Film, ShieldCheck } from 'lucide-react';
 import { Recording } from '../types';
-import { fetchRecordingBySlug, deleteRecording } from '../lib/supabase';
+import { fetchRecordingBySlug, deleteRecording, downloadRecording } from '../lib/supabase';
+import { getLocalRecordingBlob } from '../lib/idb';
 
 interface PublicPlayerProps {
   slug: string;
@@ -10,6 +11,7 @@ interface PublicPlayerProps {
 
 export const PublicPlayer: React.FC<PublicPlayerProps> = ({ slug, onBackToStudio }) => {
   const [recording, setRecording] = useState<Recording | null>(null);
+  const [resolvedVideoUrl, setResolvedVideoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -26,6 +28,14 @@ export const PublicPlayer: React.FC<PublicPlayerProps> = ({ slug, onBackToStudio
         if (isMounted) {
           if (rec) {
             setRecording(rec);
+            // Check if local IndexedDB has the blob
+            const localBlob = await getLocalRecordingBlob(rec.id);
+            if (localBlob) {
+              const objUrl = URL.createObjectURL(localBlob);
+              setResolvedVideoUrl(objUrl);
+            } else {
+              setResolvedVideoUrl(rec.video_url);
+            }
           } else {
             setError('Grabación no encontrada o ha sido eliminada.');
           }
@@ -52,6 +62,12 @@ export const PublicPlayer: React.FC<PublicPlayerProps> = ({ slug, onBackToStudio
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleDownload = async () => {
+    if (recording) {
+      await downloadRecording(recording);
+    }
+  };
+
   const handleDelete = async () => {
     if (!recording) return;
     if (confirm('¿Estás seguro de que deseas eliminar permanentemente esta grabación?')) {
@@ -72,7 +88,7 @@ export const PublicPlayer: React.FC<PublicPlayerProps> = ({ slug, onBackToStudio
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center p-6">
         <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4" />
-        <p className="text-sm font-mono text-zinc-400">Cargando video reproductor...</p>
+        <p className="text-sm font-mono text-zinc-400">Cargando reproductor de video...</p>
       </div>
     );
   }
@@ -116,12 +132,18 @@ export const PublicPlayer: React.FC<PublicPlayerProps> = ({ slug, onBackToStudio
       {/* Main Video Player Card */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl p-4 sm:p-6">
         <div className="relative aspect-video w-full bg-black rounded-xl overflow-hidden border border-zinc-800 shadow-inner mb-6">
-          <video
-            src={recording.video_url}
-            controls
-            autoPlay
-            className="w-full h-full object-contain"
-          />
+          {resolvedVideoUrl ? (
+            <video
+              src={resolvedVideoUrl}
+              controls
+              autoPlay
+              className="w-full h-full object-contain"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-zinc-500 font-mono text-xs">
+              Cargando stream de video...
+            </div>
+          )}
         </div>
 
         {/* Video Info Header */}
@@ -161,13 +183,12 @@ export const PublicPlayer: React.FC<PublicPlayerProps> = ({ slug, onBackToStudio
               )}
             </button>
 
-            <a
-              href={recording.video_url}
-              download={`${recording.share_slug}.webm`}
+            <button
+              onClick={handleDownload}
               className="flex items-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold rounded-xl transition-all border border-zinc-700 text-xs font-mono"
             >
               <Download className="w-4 h-4 text-orange-400" /> Descargar
-            </a>
+            </button>
 
             <button
               onClick={handleDelete}

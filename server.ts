@@ -122,9 +122,25 @@ app.delete('/api/recordings/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// UPLOAD RAW VIDEO BINARY ROUTE
+app.post('/api/upload-video/:id', express.raw({ type: '*/*', limit: '500mb' }), (req, res) => {
+  const { id } = req.params;
+  const filePath = path.join(DATA_DIR, `${id}.webm`);
+
+  try {
+    if (Buffer.isBuffer(req.body) && req.body.length > 0) {
+      fs.writeFileSync(filePath, req.body);
+      return res.json({ success: true, id, size: req.body.length });
+    }
+    return res.status(400).json({ error: 'Buffer de video vacío o inválido' });
+  } catch (e: any) {
+    console.error('Error al guardar archivo de video:', e);
+    return res.status(500).json({ error: 'Error interno guardando video' });
+  }
+});
+
 // UPLOAD CHUNK fallback route
 app.post('/api/upload-chunk', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {
-  // We accept multipart form data or raw buffer chunks
   const id = (req.headers['x-recording-id'] as string) || (req.query.id as string) || 'chunk_file';
   const chunkIndex = req.headers['x-chunk-index'] || req.query.chunkIndex || '0';
   const chunkFilePath = path.join(DATA_DIR, `${id}_chunk_${chunkIndex}.tmp`);
@@ -142,11 +158,21 @@ app.post('/api/upload-chunk', express.raw({ type: '*/*', limit: '50mb' }), (req,
 // GET video stream
 app.get('/api/video/:id', (req, res) => {
   const { id } = req.params;
-  const filePath = path.join(DATA_DIR, `${id}.webm`);
+  let filePath = path.join(DATA_DIR, `${id}.webm`);
 
   if (!fs.existsSync(filePath)) {
-    // If specific file not saved on disk, return 404 or empty video fallback
-    return res.status(404).json({ error: 'Video file not found' });
+    // Check if recorded with slug or alternate extension
+    if (fs.existsSync(path.join(DATA_DIR, id))) {
+      filePath = path.join(DATA_DIR, id);
+    } else {
+      const files = fs.readdirSync(DATA_DIR);
+      const match = files.find((f) => f.includes(id) && (f.endsWith('.webm') || f.endsWith('.mp4')));
+      if (match) {
+        filePath = path.join(DATA_DIR, match);
+      } else {
+        return res.status(404).json({ error: 'Video file not found' });
+      }
+    }
   }
 
   const stat = fs.statSync(filePath);

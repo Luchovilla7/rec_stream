@@ -23,6 +23,7 @@ import {
   fetchAllRecordings,
   uploadRecordingInChunks,
   deleteRecording,
+  downloadRecording,
 } from './lib/supabase';
 
 export default function App() {
@@ -313,6 +314,7 @@ export default function App() {
           recordings={recordings}
           onSelectRecording={(rec) => setActiveSlug(rec.share_slug)}
           onDeleteRecording={handleDeleteRecording}
+          onDownloadRecording={downloadRecording}
           onCopyShareLink={handleCopyShareLink}
           copiedSlug={copiedSlug}
         />

@@ -52,6 +52,42 @@ export function generateShareSlug(): string {
   return result;
 }
 
+// Helper to upload raw video binary to local server with real-time progress
+function uploadVideoFileToServer(
+  id: string,
+  blob: Blob,
+  onProgress: (percent: number) => void
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/upload-video/${id}`, true);
+    xhr.setRequestHeader('Content-Type', 'video/webm');
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percent = Math.round((event.loaded / event.total) * 100);
+        onProgress(percent);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(true);
+      } else {
+        console.warn('Server upload video status:', xhr.status);
+        resolve(false);
+      }
+    };
+
+    xhr.onerror = () => {
+      console.warn('Server upload video network error');
+      resolve(false);
+    };
+
+    xhr.send(blob);
+  });
+}
+
 // Upload chunk by chunk to Supabase Storage or server/local fallback
 export async function uploadRecordingInChunks(
   fileBlob: Blob,
@@ -70,29 +106,25 @@ export async function uploadRecordingInChunks(
   // Save to IndexedDB locally first as instant backup
   await saveLocalRecordingBlob(id, fileBlob);
 
-  const chunkSize = 2 * 1024 * 1024; // 2MB chunk size for smooth multipart upload
+  const chunkSize = 2 * 1024 * 1024; // 2MB chunk visualizer
   const totalChunks = Math.ceil(fileBlob.size / chunkSize);
+
+  let supabaseSuccess = false;
+  let publicVideoUrl = `/api/video/${id}`;
 
   if (supabase && url && key) {
     try {
-      // Direct Supabase storage bucket upload
-      // Upload chunks simulation/progress tracking
       let uploadedBytes = 0;
-      
       for (let i = 0; i < totalChunks; i++) {
         const start = i * chunkSize;
         const end = Math.min(fileBlob.size, start + chunkSize);
         const chunk = fileBlob.slice(start, end);
-        
         uploadedBytes += chunk.size;
         const percent = Math.min(99, Math.round((uploadedBytes / fileBlob.size) * 100));
-        
         onProgress(percent, i + 1, totalChunks, `PART_${i + 1}.chunk`);
-        // Small async delay for progress visibility
-        await new Promise((r) => setTimeout(r, 80));
+        await new Promise((r) => setTimeout(r, 40));
       }
 
-      // Upload full blob to Supabase Storage Bucket 'recordings'
       const { data: storageData, error: storageError } = await supabase.storage
         .from('recordings')
         .upload(fileName, fileBlob, {
@@ -100,35 +132,46 @@ export async function uploadRecordingInChunks(
           upsert: true,
         });
 
-      if (storageError) {
-        console.warn('Supabase bucket upload error, falling back to local server/db API:', storageError.message);
-        throw storageError;
+      if (!storageError) {
+        const { data: urlData } = await supabase.storage
+          .from('recordings')
+          .createSignedUrl(fileName, 60 * 60 * 24 * 365);
+
+        publicVideoUrl = urlData?.signedUrl || `${url}/storage/v1/object/public/recordings/${fileName}`;
+        supabaseSuccess = true;
       }
+    } catch (e) {
+      console.warn('Supabase upload failed, using local server storage:', e);
+    }
+  }
 
-      // Get signed URL with 7 days expiration (or public url if bucket is public)
-      const { data: urlData } = await supabase.storage
-        .from('recordings')
-        .createSignedUrl(fileName, 60 * 60 * 24 * 7);
+  // Upload video binary to server storage so links work everywhere
+  await uploadVideoFileToServer(id, fileBlob, (pct) => {
+    if (!supabaseSuccess) {
+      const chunk = Math.min(totalChunks, Math.ceil((pct / 100) * totalChunks));
+      onProgress(pct, chunk, totalChunks, `SERVER_PART_${chunk}.chunk`);
+    }
+  });
 
-      const publicVideoUrl = urlData?.signedUrl || `${url}/storage/v1/object/public/recordings/${fileName}`;
+  const newRecording: Recording = {
+    id,
+    user_id: 'user_default',
+    title: title || `Grabación ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+    storage_path: supabaseSuccess ? storagePath : `local/${id}.webm`,
+    duration_sec: durationSec,
+    share_slug: shareSlug,
+    view_count: 0,
+    file_size_mb: fileSizeMb,
+    created_at: new Date().toISOString(),
+    video_url: publicVideoUrl,
+    is_local: !supabaseSuccess,
+    mime_type: 'video/webm',
+  };
 
-      const newRecording: Recording = {
-        id,
-        user_id: 'user_default',
-        title: title || `Grabación ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-        storage_path: storagePath,
-        duration_sec: durationSec,
-        share_slug: shareSlug,
-        view_count: 0,
-        file_size_mb: fileSizeMb,
-        created_at: new Date().toISOString(),
-        video_url: publicVideoUrl,
-        is_local: false,
-        mime_type: 'video/webm',
-      };
-
-      // Try inserting into Supabase table 'recordings'
-      const { error: dbError } = await supabase.from('recordings').insert([
+  // Insert into Supabase DB if available
+  if (supabase && supabaseSuccess) {
+    try {
+      await supabase.from('recordings').insert([
         {
           id: newRecording.id,
           user_id: newRecording.user_id,
@@ -138,66 +181,17 @@ export async function uploadRecordingInChunks(
           share_slug: newRecording.share_slug,
           view_count: 0,
           created_at: newRecording.created_at,
+          video_url: newRecording.video_url,
         },
       ]);
-
-      if (dbError) {
-        console.warn('Supabase DB insert warning (table might need creation):', dbError.message);
-      }
-
-      // Sync with server memory/local storage as well
-      await saveRecordingToServer(newRecording);
-
-      onProgress(100, totalChunks, totalChunks, 'FINAL.chunk');
-      return newRecording;
-    } catch (e) {
-      console.warn('Supabase upload failed, using local server storage:', e);
-    }
-  }
-
-  // Fallback to local server API + IndexedDB
-  for (let i = 0; i < totalChunks; i++) {
-    const start = i * chunkSize;
-    const end = Math.min(fileBlob.size, start + chunkSize);
-    const chunk = fileBlob.slice(start, end);
-
-    const formData = new FormData();
-    formData.append('id', id);
-    formData.append('chunkIndex', i.toString());
-    formData.append('totalChunks', totalChunks.toString());
-    formData.append('chunk', chunk, `chunk_${i}`);
-
-    try {
-      await fetch('/api/upload-chunk', {
-        method: 'POST',
-        body: formData,
-      });
     } catch (err) {
-      console.warn('Chunk server upload note:', err);
+      console.warn('Supabase DB insert note:', err);
     }
-
-    const percent = Math.min(99, Math.round(((i + 1) / totalChunks) * 100));
-    onProgress(percent, i + 1, totalChunks, `PART_${i + 1}.chunk`);
-    await new Promise((r) => setTimeout(r, 60));
   }
 
-  const localVideoUrl = `/api/video/${id}`;
-  const newRecording: Recording = {
-    id,
-    user_id: 'user_default',
-    title: title || `Grabación ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-    storage_path: `local/${id}.webm`,
-    duration_sec: durationSec,
-    share_slug: shareSlug,
-    view_count: 0,
-    file_size_mb: fileSizeMb,
-    created_at: new Date().toISOString(),
-    video_url: localVideoUrl,
-    is_local: true,
-    mime_type: 'video/webm',
-  };
-
+  // Always save metadata to server recordings.json
   await saveRecordingToServer(newRecording);
+
   onProgress(100, totalChunks, totalChunks, 'FINAL.chunk');
   return newRecording;
 }
@@ -327,4 +321,61 @@ export async function deleteRecording(id: string, slug?: string): Promise<boolea
   const list = getLocalRecordingsFromStore().filter((r) => r.id !== id);
   localStorage.setItem('rec_stream_local_list', JSON.stringify(list));
   return true;
+}
+
+export async function downloadRecording(rec: Recording): Promise<void> {
+  const safeFilename = (rec.title || 'grabacion_pantalla')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_\-]/g, '_')
+    .replace(/_+/g, '_');
+  const filename = `${safeFilename || 'video'}.webm`;
+
+  // 1. Try local IndexedDB blob first
+  try {
+    const localBlob = await getLocalRecordingBlob(rec.id);
+    if (localBlob) {
+      const blobUrl = URL.createObjectURL(localBlob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      return;
+    }
+  } catch (e) {
+    console.warn('IndexedDB download check:', e);
+  }
+
+  // 2. Try fetching video from video_url
+  if (rec.video_url) {
+    try {
+      const response = await fetch(rec.video_url);
+      if (response.ok) {
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+        return;
+      }
+    } catch (e) {
+      console.warn('Direct fetch download fallback:', e);
+    }
+
+    // Direct link click fallback
+    const a = document.createElement('a');
+    a.href = rec.video_url;
+    a.download = filename;
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 }
