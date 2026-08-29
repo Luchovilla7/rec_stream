@@ -20,6 +20,7 @@ export interface CameraConfig {
   position: 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right';
   shape: 'circle' | 'rect';
   size: number; // radius or square size in px
+  deviceId?: string;
 }
 
 export interface AudioLevels {

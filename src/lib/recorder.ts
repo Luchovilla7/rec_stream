@@ -6,6 +6,32 @@ export interface RecorderEngineOptions {
   onTimerTick?: (seconds: number) => void;
 }
 
+export async function getCameraDevices(): Promise<MediaDeviceInfo[]> {
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return [];
+    }
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    let videoDevices = devices.filter((d) => d.kind === 'videoinput');
+
+    if (videoDevices.length > 0 && (!videoDevices[0].label || videoDevices[0].label === '')) {
+      try {
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        tempStream.getTracks().forEach((t) => t.stop());
+        const updatedDevices = await navigator.mediaDevices.enumerateDevices();
+        videoDevices = updatedDevices.filter((d) => d.kind === 'videoinput');
+      } catch (e) {
+        console.warn('Could not request camera permission for labels:', e);
+      }
+    }
+
+    return videoDevices;
+  } catch (err) {
+    console.error('Error enumerating video devices:', err);
+    return [];
+  }
+}
+
 export class RecorderEngine {
   private displayStream: MediaStream | null = null;
   private cameraStream: MediaStream | null = null;
@@ -48,8 +74,80 @@ export class RecorderEngine {
     this.onTimerTick = options.onTimerTick;
   }
 
-  public updateCameraConfig(config: CameraConfig) {
+  public async updateCameraConfig(config: CameraConfig) {
+    const oldDeviceId = this.cameraConfig.deviceId;
+    const oldEnabled = this.cameraConfig.enabled;
     this.cameraConfig = config;
+
+    // If streams are running or camera state/device changed
+    if (this.canvas || this.cameraStream || config.enabled !== oldEnabled || config.deviceId !== oldDeviceId) {
+      if (!config.enabled) {
+        if (this.cameraStream) {
+          this.cameraStream.getTracks().forEach((t) => t.stop());
+          this.cameraStream = null;
+          this.cameraVideoTrack = null;
+        }
+        if (this.cameraVideoEl) {
+          this.cameraVideoEl.srcObject = null;
+        }
+      } else {
+        // Request/Switch camera stream with specified deviceId
+        try {
+          if (this.cameraStream) {
+            this.cameraStream.getTracks().forEach((t) => t.stop());
+          }
+
+          const constraints: MediaTrackConstraints = {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          };
+          if (config.deviceId) {
+            constraints.deviceId = { exact: config.deviceId };
+          } else {
+            constraints.facingMode = 'user';
+          }
+
+          let newStream: MediaStream;
+          try {
+            newStream = await navigator.mediaDevices.getUserMedia({ video: constraints });
+          } catch (e) {
+            // Fallback if exact device ID constraint fails
+            newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          }
+
+          this.cameraStream = newStream;
+          this.cameraVideoTrack = newStream.getVideoTracks()[0] || null;
+
+          if (this.cameraVideoTrack) {
+            let hiddenContainer = document.getElementById('rec-stream-hidden-container');
+            if (!hiddenContainer) {
+              hiddenContainer = document.createElement('div');
+              hiddenContainer.id = 'rec-stream-hidden-container';
+              hiddenContainer.style.position = 'fixed';
+              hiddenContainer.style.top = '-9999px';
+              hiddenContainer.style.left = '-9999px';
+              hiddenContainer.style.width = '1px';
+              hiddenContainer.style.height = '1px';
+              hiddenContainer.style.opacity = '0.001';
+              hiddenContainer.style.pointerEvents = 'none';
+              hiddenContainer.style.zIndex = '-9999';
+              document.body.appendChild(hiddenContainer);
+            }
+
+            if (!this.cameraVideoEl) {
+              this.cameraVideoEl = document.createElement('video');
+              this.cameraVideoEl.muted = true;
+              this.cameraVideoEl.playsInline = true;
+              hiddenContainer.appendChild(this.cameraVideoEl);
+            }
+            this.cameraVideoEl.srcObject = newStream;
+            await this.cameraVideoEl.play().catch(() => {});
+          }
+        } catch (err) {
+          console.warn('Error updating camera stream:', err);
+        }
+      }
+    }
   }
 
   public getCanvasElement(): HTMLCanvasElement | null {
@@ -115,13 +213,23 @@ export class RecorderEngine {
 
     if (this.cameraConfig.enabled) {
       try {
-        this.cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            facingMode: 'user',
-          },
-        });
+        const videoConstraints: MediaTrackConstraints = {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        };
+        if (this.cameraConfig.deviceId) {
+          videoConstraints.deviceId = { exact: this.cameraConfig.deviceId };
+        } else {
+          videoConstraints.facingMode = 'user';
+        }
+
+        try {
+          this.cameraStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+        } catch (err) {
+          // Fallback if exact device ID constraint fails
+          this.cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        }
+
         this.cameraVideoTrack = this.cameraStream.getVideoTracks()[0] || null;
       } catch (err) {
         console.warn('Camera permission not granted or camera unavailable:', err);

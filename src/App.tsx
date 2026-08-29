@@ -17,7 +17,7 @@ import {
   SupabaseConfig,
   UploadProgressInfo,
 } from './types';
-import { RecorderEngine } from './lib/recorder';
+import { RecorderEngine, getCameraDevices } from './lib/recorder';
 import {
   getStoredSupabaseConfig,
   fetchAllRecordings,
@@ -62,6 +62,26 @@ export default function App() {
     shape: 'circle',
     size: 160,
   });
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+
+  const loadDevices = async () => {
+    const devs = await getCameraDevices();
+    setVideoDevices(devs);
+  };
+
+  useEffect(() => {
+    loadDevices();
+
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      const handleDeviceChange = () => {
+        loadDevices();
+      };
+      navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+      return () => {
+        navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+      };
+    }
+  }, []);
 
   const [audioLevels, setAudioLevels] = useState<AudioLevels>({
     micLevel: 0,
@@ -105,12 +125,23 @@ export default function App() {
   const totalUsedMb = recordings.reduce((acc, r) => acc + (r.file_size_mb || 0), 0);
 
   // Handle camera config change dynamically
-  const handleToggleCamera = () => {
+  const handleToggleCamera = async () => {
     const next = !cameraConfig.enabled;
     const newConfig = { ...cameraConfig, enabled: next };
     setCameraConfig(newConfig);
+    if (next) {
+      loadDevices();
+    }
     if (engineRef.current) {
-      engineRef.current.updateCameraConfig(newConfig);
+      await engineRef.current.updateCameraConfig(newConfig);
+    }
+  };
+
+  const handleChangeCameraDevice = async (deviceId: string) => {
+    const newConfig = { ...cameraConfig, deviceId };
+    setCameraConfig(newConfig);
+    if (engineRef.current) {
+      await engineRef.current.updateCameraConfig(newConfig);
     }
   };
 
@@ -277,12 +308,15 @@ export default function App() {
         <RecordingViewport
           recordingState={recordingState}
           cameraConfig={cameraConfig}
+          videoDevices={videoDevices}
           previewUrl={previewUrl}
           canvasElement={canvasElement}
           captureError={captureError}
           onToggleCamera={handleToggleCamera}
           onChangeCameraPos={handleChangeCameraPos}
           onChangeCameraShape={handleChangeCameraShape}
+          onChangeCameraDevice={handleChangeCameraDevice}
+          onRefreshDevices={loadDevices}
           onDiscardPreview={handleDiscardPreview}
           onStartRecord={handleStartCapture}
           onClearError={() => setCaptureError(null)}

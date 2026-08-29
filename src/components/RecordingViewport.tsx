@@ -5,12 +5,15 @@ import { CameraConfig, RecordingState } from '../types';
 interface RecordingViewportProps {
   recordingState: RecordingState;
   cameraConfig: CameraConfig;
+  videoDevices?: MediaDeviceInfo[];
   previewUrl: string | null;
   canvasElement: HTMLCanvasElement | null;
   captureError?: string | null;
   onToggleCamera: () => void;
   onChangeCameraPos: (pos: CameraConfig['position']) => void;
   onChangeCameraShape: (shape: CameraConfig['shape']) => void;
+  onChangeCameraDevice?: (deviceId: string) => void;
+  onRefreshDevices?: () => void;
   onDiscardPreview: () => void;
   onStartRecord: () => void;
   onClearError?: () => void;
@@ -19,12 +22,15 @@ interface RecordingViewportProps {
 export const RecordingViewport: React.FC<RecordingViewportProps> = ({
   recordingState,
   cameraConfig,
+  videoDevices = [],
   previewUrl,
   canvasElement,
   captureError,
   onToggleCamera,
   onChangeCameraPos,
   onChangeCameraShape,
+  onChangeCameraDevice,
+  onRefreshDevices,
   onDiscardPreview,
   onStartRecord,
   onClearError,
@@ -163,6 +169,40 @@ export const RecordingViewport: React.FC<RecordingViewportProps> = ({
 
           {cameraConfig.enabled && (
             <>
+              {/* Camera Device Selector Dropdown */}
+              <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-[10px] font-mono text-zinc-300">
+                <select
+                  value={cameraConfig.deviceId || (videoDevices && videoDevices[0]?.deviceId) || ''}
+                  onChange={(e) => onChangeCameraDevice?.(e.target.value)}
+                  className="bg-transparent text-zinc-200 outline-none cursor-pointer max-w-[140px] sm:max-w-[210px] truncate"
+                >
+                  {videoDevices && videoDevices.length > 0 ? (
+                    videoDevices.map((dev, idx) => {
+                      const label = dev.label || `Cámara ${idx + 1}`;
+                      const isUsb = label.toLowerCase().includes('usb') || label.toLowerCase().includes('external') || label.toLowerCase().includes('cam');
+                      return (
+                        <option key={dev.deviceId || idx} value={dev.deviceId} className="bg-zinc-900 text-zinc-200">
+                          {isUsb ? '📹 USB: ' : '🎥 '}{label}
+                        </option>
+                      );
+                    })
+                  ) : (
+                    <option value="" className="bg-zinc-900 text-zinc-400">
+                      Cámara por defecto
+                    </option>
+                  )}
+                </select>
+                {onRefreshDevices && (
+                  <button
+                    onClick={onRefreshDevices}
+                    title="Actualizar / Buscar cámaras USB"
+                    className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-all ml-0.5"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
               <div className="h-4 w-px bg-zinc-800" />
               <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-1 text-[10px] font-mono">
                 <span className="text-zinc-500 px-1">POS:</span>
