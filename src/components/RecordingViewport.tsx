@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { Camera, CameraOff, Monitor, RefreshCw, Layers, CheckCircle2, ShieldCheck, Play, Trash2, ExternalLink, AlertTriangle } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Camera, CameraOff, Monitor, RefreshCw, Layers, CheckCircle2, ShieldCheck, Play, Trash2, ExternalLink, AlertTriangle, Video } from 'lucide-react';
 import { CameraConfig, RecordingState } from '../types';
 
 interface RecordingViewportProps {
@@ -18,6 +18,104 @@ interface RecordingViewportProps {
   onStartRecord: () => void;
   onClearError?: () => void;
 }
+
+const LiveCameraPreviewBubble: React.FC<{ cameraConfig: CameraConfig }> = ({ cameraConfig }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [streamError, setStreamError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let activeStream: MediaStream | null = null;
+    let isCancelled = false;
+
+    async function initCamera() {
+      if (!cameraConfig.enabled) return;
+      setStreamError(null);
+
+      try {
+        const constraints: MediaTrackConstraints = {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+        };
+        if (cameraConfig.deviceId) {
+          constraints.deviceId = { exact: cameraConfig.deviceId };
+        } else {
+          constraints.facingMode = 'user';
+        }
+
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: constraints });
+        } catch (e) {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        }
+
+        if (isCancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        activeStream = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
+      } catch (err: any) {
+        if (!isCancelled) {
+          console.warn('Preview camera stream error:', err);
+          setStreamError('Cámara no disponible');
+        }
+      }
+    }
+
+    initCamera();
+
+    return () => {
+      isCancelled = true;
+      if (activeStream) {
+        activeStream.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, [cameraConfig.enabled, cameraConfig.deviceId]);
+
+  if (!cameraConfig.enabled) return null;
+
+  const posClasses = {
+    'bottom-left': 'bottom-4 left-4',
+    'bottom-right': 'bottom-4 right-4',
+    'top-left': 'top-14 left-4',
+    'top-right': 'top-14 right-4',
+  }[cameraConfig.position];
+
+  const shapeClasses = cameraConfig.shape === 'circle' ? 'rounded-full' : 'rounded-2xl';
+
+  return (
+    <div
+      className={`absolute ${posClasses} z-10 pointer-events-none transition-all duration-300 ease-out`}
+    >
+      <div
+        className={`relative w-28 h-28 sm:w-36 sm:h-36 ${shapeClasses} border-4 border-orange-500 bg-zinc-950 shadow-2xl shadow-orange-500/30 overflow-hidden flex items-center justify-center`}
+      >
+        {streamError ? (
+          <div className="text-center p-2 text-zinc-500 text-[10px] font-mono">
+            <Video className="w-5 h-5 mx-auto mb-1 text-zinc-600" />
+            Sin Cámara
+          </div>
+        ) : (
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full h-full object-cover transform scale-x-[-1]"
+          />
+        )}
+        <div className="absolute top-1 right-1 bg-black/60 backdrop-blur px-1.5 py-0.5 rounded text-[8px] font-mono text-orange-400 font-bold tracking-wider">
+          LIVE
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const RecordingViewport: React.FC<RecordingViewportProps> = ({
   recordingState,
@@ -60,6 +158,11 @@ export const RecordingViewport: React.FC<RecordingViewportProps> = ({
               <span className="text-red-400 font-bold flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
                 GRABANDO
+              </span>
+            ) : recordingState === 'preparing' ? (
+              <span className="text-amber-400 font-bold flex items-center gap-1.5">
+                <RefreshCw className="w-3 h-3 animate-spin text-amber-400" />
+                ABRIENDO SELECTOR...
               </span>
             ) : recordingState === 'paused' ? (
               <span className="text-amber-400 font-bold">PAUSADO</span>
@@ -119,18 +222,42 @@ export const RecordingViewport: React.FC<RecordingViewportProps> = ({
             />
           </div>
         ) : (
-          <div ref={containerRef} className="w-full h-full flex items-center justify-center">
-            {/* Idle Placeholder when stream not started yet */}
-            {recordingState === 'idle' && !canvasElement && (
-              <div className="text-center p-8 max-w-md">
-                <div className="w-20 h-20 bg-orange-500/10 border border-orange-500/20 rounded-2xl flex items-center justify-center mx-auto mb-5 text-orange-500 shadow-inner">
-                  <Monitor className="w-10 h-10" />
+          <div className="w-full h-full relative flex items-center justify-center">
+            {/* Live Camera Bubble Overlay in Idle state */}
+            {recordingState === 'idle' && cameraConfig.enabled && !canvasElement && (
+              <LiveCameraPreviewBubble cameraConfig={cameraConfig} />
+            )}
+
+            {/* Canvas Container when recording */}
+            <div ref={containerRef} className="w-full h-full flex items-center justify-center" />
+
+            {/* Idle Placeholder or Preparing indicator */}
+            {recordingState === 'preparing' && (
+              <div className="text-center p-8 max-w-md bg-zinc-900/90 border border-zinc-800 rounded-2xl backdrop-blur">
+                <div className="w-16 h-16 bg-orange-500/10 border border-orange-500/30 rounded-full flex items-center justify-center mx-auto mb-4 text-orange-500 shadow-lg">
+                  <RefreshCw className="w-8 h-8 animate-spin" />
                 </div>
-                <h3 className="text-lg font-bold text-zinc-100 mb-2 font-mono">
-                  Compartir Pantalla & Cámara
+                <h3 className="text-base font-bold text-zinc-100 mb-1 font-mono">
+                  Solicitando Captura de Pantalla
                 </h3>
-                <p className="text-xs text-zinc-400 leading-relaxed mb-6">
-                  Mezcla video de pantalla, micrófono y cámara web circular en un solo stream WebM de alta fidelidad.
+                <p className="text-xs text-zinc-400 leading-relaxed font-sans">
+                  Elige la pantalla, ventana o pestaña que deseas grabar en el cuadro emergente del navegador.
+                </p>
+              </div>
+            )}
+
+            {recordingState === 'idle' && !canvasElement && (
+              <div className="text-center p-8 max-w-md z-10 bg-zinc-950/60 backdrop-blur-md border border-zinc-800/80 rounded-2xl shadow-xl">
+                <div className="w-16 h-16 bg-orange-500/10 border border-orange-500/20 rounded-2xl flex items-center justify-center mx-auto mb-4 text-orange-500 shadow-inner">
+                  <Monitor className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-zinc-100 mb-1.5 font-mono">
+                  {cameraConfig.enabled ? 'Cámara Activada - Vista Previa' : 'Compartir Pantalla & Cámara'}
+                </h3>
+                <p className="text-xs text-zinc-400 leading-relaxed mb-5">
+                  {cameraConfig.enabled
+                    ? 'Comprueba cómo te ves en el recuadro naranja. Ajusta la posición o tu cámara USB abajo antes de iniciar.'
+                    : 'Graba video de pantalla, micrófono y cámara web circular en un solo archivo WebM de alta fidelidad.'}
                 </p>
                 <button
                   onClick={onStartRecord}

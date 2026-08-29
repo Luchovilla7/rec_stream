@@ -164,11 +164,16 @@ export default function App() {
   // Recording controls
   const handleStartCapture = async () => {
     setCaptureError(null);
+    setRecordingState('preparing');
+
     try {
       engineRef.current = new RecorderEngine({
         cameraConfig,
         onAudioLevels: (levels) => setAudioLevels(levels),
         onTimerTick: (secs) => setElapsedSeconds(secs),
+        onEnded: () => {
+          handleStopAndSave();
+        },
       });
 
       await engineRef.current.startPreviewStreams();
@@ -178,9 +183,13 @@ export default function App() {
       setRecordingState('recording');
     } catch (err: any) {
       console.error('Error starting capture:', err);
+      setRecordingState('idle');
+      if (err.message && err.message.toLowerCase().includes('cancelado')) {
+        // Quiet reset when user cancels screen picker modal
+        return;
+      }
       const msg = err.message || 'Error al iniciar la grabación de pantalla';
       setCaptureError(msg);
-      setRecordingState('idle');
     }
   };
 
@@ -256,6 +265,10 @@ export default function App() {
   const handleDiscardPreview = () => {
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
+    }
+    if (engineRef.current) {
+      engineRef.current.cleanup();
+      engineRef.current = null;
     }
     setPreviewBlob(null);
     setPreviewUrl(null);

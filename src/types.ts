@@ -13,7 +13,7 @@ export interface Recording {
   mime_type?: string;
 }
 
-export type RecordingState = 'idle' | 'recording' | 'paused' | 'preview' | 'uploading' | 'completed';
+export type RecordingState = 'idle' | 'preparing' | 'recording' | 'paused' | 'preview' | 'uploading' | 'completed';
 
 export interface CameraConfig {
   enabled: boolean;

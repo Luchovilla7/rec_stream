@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Pause, Square, Circle, Save } from 'lucide-react';
+import { Play, Pause, Square, Circle, Save, RefreshCw } from 'lucide-react';
 import { RecordingState } from '../types';
 
 interface ControlPanelProps {
@@ -80,6 +80,16 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           >
             <Circle className="w-4 h-4 fill-current text-white" />
             INICIAR GRABACIÓN
+          </button>
+        )}
+
+        {recordingState === 'preparing' && (
+          <button
+            disabled
+            className="w-full bg-orange-600/80 text-white font-bold py-3 px-4 rounded-xl cursor-wait flex items-center justify-center gap-2 text-sm animate-pulse"
+          >
+            <RefreshCw className="w-4 h-4 animate-spin" />
+            ABRIENDO SELECTOR...
           </button>
         )}
 

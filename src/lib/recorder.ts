@@ -4,6 +4,7 @@ export interface RecorderEngineOptions {
   cameraConfig: CameraConfig;
   onAudioLevels?: (levels: AudioLevels) => void;
   onTimerTick?: (seconds: number) => void;
+  onEnded?: () => void;
 }
 
 export async function getCameraDevices(): Promise<MediaDeviceInfo[]> {
@@ -67,11 +68,13 @@ export class RecorderEngine {
   private cameraConfig: CameraConfig;
   private onAudioLevels?: (levels: AudioLevels) => void;
   private onTimerTick?: (seconds: number) => void;
+  private onEnded?: () => void;
 
   constructor(options: RecorderEngineOptions) {
     this.cameraConfig = options.cameraConfig;
     this.onAudioLevels = options.onAudioLevels;
     this.onTimerTick = options.onTimerTick;
+    this.onEnded = options.onEnded;
   }
 
   public async updateCameraConfig(config: CameraConfig) {
@@ -193,7 +196,11 @@ export class RecorderEngine {
     // Handle screen share stop by user from browser UI bar
     if (this.screenVideoTrack) {
       this.screenVideoTrack.onended = () => {
-        this.stopRecording().catch(() => {});
+        if (this.onEnded) {
+          this.onEnded();
+        } else {
+          this.stopRecording().catch(() => {});
+        }
       };
     }
 
