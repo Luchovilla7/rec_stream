@@ -1,15 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Camera, CameraOff, Monitor, RefreshCw, Layers, CheckCircle2, ShieldCheck, Play, Trash2, ExternalLink, AlertTriangle, Video } from 'lucide-react';
+import { Camera, CameraOff, Monitor, RefreshCw, Layers, CheckCircle2, ShieldCheck, Play, Trash2, ExternalLink, AlertTriangle, Video, Volume2, VolumeX, Mic, MicOff } from 'lucide-react';
 import { CameraConfig, RecordingState } from '../types';
 
 interface RecordingViewportProps {
   recordingState: RecordingState;
   cameraConfig: CameraConfig;
+  audioEnabled: boolean;
   videoDevices?: MediaDeviceInfo[];
   previewUrl: string | null;
   canvasElement: HTMLCanvasElement | null;
   captureError?: string | null;
   onToggleCamera: () => void;
+  onToggleAudio: () => void;
   onChangeCameraPos: (pos: CameraConfig['position']) => void;
   onChangeCameraShape: (shape: CameraConfig['shape']) => void;
   onChangeCameraDevice?: (deviceId: string) => void;
@@ -120,11 +122,13 @@ const LiveCameraPreviewBubble: React.FC<{ cameraConfig: CameraConfig }> = ({ cam
 export const RecordingViewport: React.FC<RecordingViewportProps> = ({
   recordingState,
   cameraConfig,
+  audioEnabled,
   videoDevices = [],
   previewUrl,
   canvasElement,
   captureError,
   onToggleCamera,
+  onToggleAudio,
   onChangeCameraPos,
   onChangeCameraShape,
   onChangeCameraDevice,
@@ -175,7 +179,15 @@ export const RecordingViewport: React.FC<RecordingViewportProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="bg-black/70 backdrop-blur px-3 py-1.5 rounded-lg text-[10px] font-mono text-white/80 tracking-widest border border-white/10">
+          <span className={`bg-black/70 backdrop-blur px-2.5 py-1.5 rounded-lg text-[10px] font-mono tracking-wider border flex items-center gap-1.5 ${
+            audioEnabled
+              ? 'text-emerald-400 border-emerald-500/30'
+              : 'text-amber-400 border-amber-500/30'
+          }`}>
+            {audioEnabled ? <Volume2 className="w-3 h-3 text-emerald-400" /> : <VolumeX className="w-3 h-3 text-amber-400" />}
+            {audioEnabled ? 'SONIDO: ACTIVO' : 'SONIDO: OMITIDO'}
+          </span>
+          <span className="bg-black/70 backdrop-blur px-3 py-1.5 rounded-lg text-[10px] font-mono text-white/80 tracking-widest border border-white/10 hidden sm:inline-block">
             WEBM / VP9 + OPUS
           </span>
         </div>
@@ -272,9 +284,29 @@ export const RecordingViewport: React.FC<RecordingViewportProps> = ({
         )}
       </div>
 
-      {/* Camera Bubble Controls Bar */}
+      {/* Camera & Audio Controls Bar */}
       <div className="bg-zinc-950/90 border-t border-zinc-800/80 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs z-10">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={onToggleAudio}
+            title={audioEnabled ? 'Omitir o deshabilitar captura de audio' : 'Habilitar captura de audio (micrófono y sistema)'}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-[11px] transition-all border ${
+              audioEnabled
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                : 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20'
+            }`}
+          >
+            {audioEnabled ? (
+              <>
+                <Volume2 className="w-3.5 h-3.5" /> AUDIO ON
+              </>
+            ) : (
+              <>
+                <VolumeX className="w-3.5 h-3.5" /> AUDIO OFF (SIN SONIDO)
+              </>
+            )}
+          </button>
+
           <button
             onClick={onToggleCamera}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-[11px] transition-all border ${

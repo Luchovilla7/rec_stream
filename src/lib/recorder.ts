@@ -2,6 +2,7 @@ import { AudioLevels, CameraConfig } from '../types';
 
 export interface RecorderEngineOptions {
   cameraConfig: CameraConfig;
+  audioEnabled?: boolean;
   onAudioLevels?: (levels: AudioLevels) => void;
   onTimerTick?: (seconds: number) => void;
   onEnded?: () => void;
@@ -66,15 +67,55 @@ export class RecorderEngine {
   private drawIntervalId: number | null = null;
 
   private cameraConfig: CameraConfig;
+  private audioEnabled: boolean = true;
   private onAudioLevels?: (levels: AudioLevels) => void;
   private onTimerTick?: (seconds: number) => void;
   private onEnded?: () => void;
 
   constructor(options: RecorderEngineOptions) {
     this.cameraConfig = options.cameraConfig;
+    this.audioEnabled = options.audioEnabled ?? true;
     this.onAudioLevels = options.onAudioLevels;
     this.onTimerTick = options.onTimerTick;
     this.onEnded = options.onEnded;
+  }
+
+  public async setAudioEnabled(enabled: boolean) {
+    this.audioEnabled = enabled;
+
+    if (!enabled) {
+      if (this.micStream) {
+        this.micStream.getTracks().forEach((t) => t.stop());
+        this.micStream = null;
+        this.micAudioTrack = null;
+      }
+      this.systemAudioTrack = null;
+    } else if (this.displayStream) {
+      // Re-enable audio if stream is active
+      try {
+        const systemAudioTracks = this.displayStream.getAudioTracks();
+        if (systemAudioTracks.length > 0) {
+          this.systemAudioTrack = systemAudioTracks[0];
+        }
+
+        if (!this.micStream) {
+          this.micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+          this.micAudioTrack = this.micStream.getAudioTracks()[0] || null;
+        }
+      } catch (err) {
+        console.warn('Error re-enabling microphone stream:', err);
+      }
+    }
+
+    if (this.audioCtx) {
+      this.setupAudioMixer();
+    }
   }
 
   public async updateCameraConfig(config: CameraConfig) {
@@ -188,9 +229,11 @@ export class RecorderEngine {
     }
 
     this.screenVideoTrack = this.displayStream.getVideoTracks()[0] || null;
-    const systemAudioTracks = this.displayStream.getAudioTracks();
-    if (systemAudioTracks.length > 0) {
-      this.systemAudioTrack = systemAudioTracks[0];
+    if (this.audioEnabled) {
+      const systemAudioTracks = this.displayStream.getAudioTracks();
+      if (systemAudioTracks.length > 0) {
+        this.systemAudioTrack = systemAudioTracks[0];
+      }
     }
 
     // Handle screen share stop by user from browser UI bar
@@ -204,18 +247,20 @@ export class RecorderEngine {
       };
     }
 
-    // 2. Request mic and camera if enabled
-    try {
-      this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      this.micAudioTrack = this.micStream.getAudioTracks()[0] || null;
-    } catch (err) {
-      console.warn('Microphone permission not granted or mic unavailable:', err);
+    // 2. Request mic if audio is enabled, and camera if enabled
+    if (this.audioEnabled) {
+      try {
+        this.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        this.micAudioTrack = this.micStream.getAudioTracks()[0] || null;
+      } catch (err) {
+        console.warn('Microphone permission not granted or mic unavailable:', err);
+      }
     }
 
     if (this.cameraConfig.enabled) {
@@ -307,6 +352,23 @@ export class RecorderEngine {
   }
 
   private setupAudioMixer() {
+    if (this.levelCheckInterval) {
+      clearInterval(this.levelCheckInterval);
+      this.levelCheckInterval = null;
+    }
+
+    if (!this.audioEnabled) {
+      if (this.onAudioLevels) {
+        this.onAudioLevels({
+          micLevel: 0,
+          systemLevel: 0,
+          micActive: false,
+          systemActive: false,
+        });
+      }
+      return;
+    }
+
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
 
@@ -512,7 +574,7 @@ export class RecorderEngine {
       }
     }
 
-    if (this.audioDestination) {
+    if (this.audioEnabled && this.audioDestination) {
       const audioTracks = this.audioDestination.stream.getAudioTracks();
       if (audioTracks.length > 0) {
         combinedTracks.push(audioTracks[0]);

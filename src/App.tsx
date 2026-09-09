@@ -56,6 +56,7 @@ export default function App() {
   const [recordingState, setRecordingState] = useState<RecordingState>('idle');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [recordingTitle, setRecordingTitle] = useState('');
+  const [audioEnabled, setAudioEnabled] = useState(true);
   const [cameraConfig, setCameraConfig] = useState<CameraConfig>({
     enabled: true,
     position: 'bottom-left',
@@ -124,7 +125,15 @@ export default function App() {
   // Compute total used storage MB
   const totalUsedMb = recordings.reduce((acc, r) => acc + (r.file_size_mb || 0), 0);
 
-  // Handle camera config change dynamically
+  // Handle camera & audio config change dynamically
+  const handleToggleAudio = async () => {
+    const next = !audioEnabled;
+    setAudioEnabled(next);
+    if (engineRef.current) {
+      await engineRef.current.setAudioEnabled(next);
+    }
+  };
+
   const handleToggleCamera = async () => {
     const next = !cameraConfig.enabled;
     const newConfig = { ...cameraConfig, enabled: next };
@@ -169,6 +178,7 @@ export default function App() {
     try {
       engineRef.current = new RecorderEngine({
         cameraConfig,
+        audioEnabled,
         onAudioLevels: (levels) => setAudioLevels(levels),
         onTimerTick: (secs) => setElapsedSeconds(secs),
         onEnded: () => {
@@ -321,11 +331,13 @@ export default function App() {
         <RecordingViewport
           recordingState={recordingState}
           cameraConfig={cameraConfig}
+          audioEnabled={audioEnabled}
           videoDevices={videoDevices}
           previewUrl={previewUrl}
           canvasElement={canvasElement}
           captureError={captureError}
           onToggleCamera={handleToggleCamera}
+          onToggleAudio={handleToggleAudio}
           onChangeCameraPos={handleChangeCameraPos}
           onChangeCameraShape={handleChangeCameraShape}
           onChangeCameraDevice={handleChangeCameraDevice}
@@ -348,7 +360,7 @@ export default function App() {
         />
 
         {/* Audio Visualizer Card */}
-        <AudioVisualizer audioLevels={audioLevels} />
+        <AudioVisualizer audioLevels={audioLevels} audioEnabled={audioEnabled} />
 
         {/* Multipart Upload Card */}
         <UploadProgress
