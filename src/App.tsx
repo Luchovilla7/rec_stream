@@ -11,6 +11,7 @@ import { SupabaseSettingsModal } from './components/SupabaseSettingsModal';
 
 import {
   AudioLevels,
+  AudioSourceConfig,
   CameraConfig,
   Recording,
   RecordingState,
@@ -56,7 +57,10 @@ export default function App() {
   const [recordingState, setRecordingState] = useState<RecordingState>('idle');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [recordingTitle, setRecordingTitle] = useState('');
-  const [audioEnabled, setAudioEnabled] = useState(true);
+  const [audioConfig, setAudioConfig] = useState<AudioSourceConfig>({
+    micEnabled: true,
+    systemEnabled: true,
+  });
   const [cameraConfig, setCameraConfig] = useState<CameraConfig>({
     enabled: true,
     position: 'bottom-left',
@@ -126,11 +130,19 @@ export default function App() {
   const totalUsedMb = recordings.reduce((acc, r) => acc + (r.file_size_mb || 0), 0);
 
   // Handle camera & audio config change dynamically
-  const handleToggleAudio = async () => {
-    const next = !audioEnabled;
-    setAudioEnabled(next);
+  const handleToggleMicAudio = async () => {
+    const newConfig = { ...audioConfig, micEnabled: !audioConfig.micEnabled };
+    setAudioConfig(newConfig);
     if (engineRef.current) {
-      await engineRef.current.setAudioEnabled(next);
+      await engineRef.current.setAudioConfig(newConfig);
+    }
+  };
+
+  const handleToggleSystemAudio = async () => {
+    const newConfig = { ...audioConfig, systemEnabled: !audioConfig.systemEnabled };
+    setAudioConfig(newConfig);
+    if (engineRef.current) {
+      await engineRef.current.setAudioConfig(newConfig);
     }
   };
 
@@ -178,7 +190,7 @@ export default function App() {
     try {
       engineRef.current = new RecorderEngine({
         cameraConfig,
-        audioEnabled,
+        audioConfig,
         onAudioLevels: (levels) => setAudioLevels(levels),
         onTimerTick: (secs) => setElapsedSeconds(secs),
         onEnded: () => {
@@ -331,13 +343,14 @@ export default function App() {
         <RecordingViewport
           recordingState={recordingState}
           cameraConfig={cameraConfig}
-          audioEnabled={audioEnabled}
+          audioConfig={audioConfig}
           videoDevices={videoDevices}
           previewUrl={previewUrl}
           canvasElement={canvasElement}
           captureError={captureError}
           onToggleCamera={handleToggleCamera}
-          onToggleAudio={handleToggleAudio}
+          onToggleMicAudio={handleToggleMicAudio}
+          onToggleSystemAudio={handleToggleSystemAudio}
           onChangeCameraPos={handleChangeCameraPos}
           onChangeCameraShape={handleChangeCameraShape}
           onChangeCameraDevice={handleChangeCameraDevice}
@@ -360,7 +373,12 @@ export default function App() {
         />
 
         {/* Audio Visualizer Card */}
-        <AudioVisualizer audioLevels={audioLevels} audioEnabled={audioEnabled} />
+        <AudioVisualizer
+          audioLevels={audioLevels}
+          audioConfig={audioConfig}
+          onToggleMicAudio={handleToggleMicAudio}
+          onToggleSystemAudio={handleToggleSystemAudio}
+        />
 
         {/* Multipart Upload Card */}
         <UploadProgress

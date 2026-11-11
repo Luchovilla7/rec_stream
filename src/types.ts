@@ -30,6 +30,11 @@ export interface AudioLevels {
   systemActive: boolean;
 }
 
+export interface AudioSourceConfig {
+  micEnabled: boolean;
+  systemEnabled: boolean;
+}
+
 export interface SupabaseConfig {
   url: string;
   anonKey: string;

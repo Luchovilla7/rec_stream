@@ -1,7 +1,8 @@
-import { AudioLevels, CameraConfig } from '../types';
+import { AudioLevels, AudioSourceConfig, CameraConfig } from '../types';
 
 export interface RecorderEngineOptions {
   cameraConfig: CameraConfig;
+  audioConfig?: AudioSourceConfig;
   audioEnabled?: boolean;
   onAudioLevels?: (levels: AudioLevels) => void;
   onTimerTick?: (seconds: number) => void;
@@ -67,55 +68,53 @@ export class RecorderEngine {
   private drawIntervalId: number | null = null;
 
   private cameraConfig: CameraConfig;
-  private audioEnabled: boolean = true;
+  private micAudioEnabled: boolean = true;
+  private systemAudioEnabled: boolean = true;
   private onAudioLevels?: (levels: AudioLevels) => void;
   private onTimerTick?: (seconds: number) => void;
   private onEnded?: () => void;
 
   constructor(options: RecorderEngineOptions) {
     this.cameraConfig = options.cameraConfig;
-    this.audioEnabled = options.audioEnabled ?? true;
+    if (options.audioConfig) {
+      this.micAudioEnabled = options.audioConfig.micEnabled;
+      this.systemAudioEnabled = options.audioConfig.systemEnabled;
+    } else if (options.audioEnabled !== undefined) {
+      this.micAudioEnabled = options.audioEnabled;
+      this.systemAudioEnabled = options.audioEnabled;
+    }
     this.onAudioLevels = options.onAudioLevels;
     this.onTimerTick = options.onTimerTick;
     this.onEnded = options.onEnded;
   }
 
-  public async setAudioEnabled(enabled: boolean) {
-    this.audioEnabled = enabled;
+  public async setAudioConfig(config: AudioSourceConfig) {
+    const micWasOff = !this.micAudioEnabled;
+    this.micAudioEnabled = config.micEnabled;
+    this.systemAudioEnabled = config.systemEnabled;
 
-    if (!enabled) {
-      if (this.micStream) {
-        this.micStream.getTracks().forEach((t) => t.stop());
-        this.micStream = null;
-        this.micAudioTrack = null;
-      }
-      this.systemAudioTrack = null;
-    } else if (this.displayStream) {
-      // Re-enable audio if stream is active
+    if (this.micAudioEnabled && micWasOff && !this.micStream && this.displayStream) {
       try {
-        const systemAudioTracks = this.displayStream.getAudioTracks();
-        if (systemAudioTracks.length > 0) {
-          this.systemAudioTrack = systemAudioTracks[0];
-        }
-
-        if (!this.micStream) {
-          this.micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-          });
-          this.micAudioTrack = this.micStream.getAudioTracks()[0] || null;
-        }
+        this.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        this.micAudioTrack = this.micStream.getAudioTracks()[0] || null;
       } catch (err) {
-        console.warn('Error re-enabling microphone stream:', err);
+        console.warn('Microphone permission not granted or mic unavailable:', err);
       }
     }
 
     if (this.audioCtx) {
       this.setupAudioMixer();
     }
+  }
+
+  public async setAudioEnabled(enabled: boolean) {
+    await this.setAudioConfig({ micEnabled: enabled, systemEnabled: enabled });
   }
 
   public async updateCameraConfig(config: CameraConfig) {
@@ -229,11 +228,9 @@ export class RecorderEngine {
     }
 
     this.screenVideoTrack = this.displayStream.getVideoTracks()[0] || null;
-    if (this.audioEnabled) {
-      const systemAudioTracks = this.displayStream.getAudioTracks();
-      if (systemAudioTracks.length > 0) {
-        this.systemAudioTrack = systemAudioTracks[0];
-      }
+    const systemAudioTracks = this.displayStream.getAudioTracks();
+    if (systemAudioTracks.length > 0) {
+      this.systemAudioTrack = systemAudioTracks[0];
     }
 
     // Handle screen share stop by user from browser UI bar
@@ -247,8 +244,8 @@ export class RecorderEngine {
       };
     }
 
-    // 2. Request mic if audio is enabled, and camera if enabled
-    if (this.audioEnabled) {
+    // 2. Request mic if mic audio is enabled, and camera if enabled
+    if (this.micAudioEnabled) {
       try {
         this.micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -357,7 +354,9 @@ export class RecorderEngine {
       this.levelCheckInterval = null;
     }
 
-    if (!this.audioEnabled) {
+    const hasAnyAudio = this.micAudioEnabled || this.systemAudioEnabled;
+
+    if (!hasAnyAudio) {
       if (this.onAudioLevels) {
         this.onAudioLevels({
           micLevel: 0,
@@ -372,6 +371,12 @@ export class RecorderEngine {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return;
 
+    if (this.audioCtx && this.audioCtx.state !== 'closed') {
+      try {
+        this.audioCtx.close();
+      } catch (e) {}
+    }
+
     this.audioCtx = new AudioCtx();
     this.audioDestination = this.audioCtx.createMediaStreamDestination();
 
@@ -384,10 +389,14 @@ export class RecorderEngine {
         this.micAnalyser.fftSize = 64;
 
         micSource.connect(this.micAnalyser);
-        micSource.connect(this.audioDestination);
+        if (this.micAudioEnabled) {
+          micSource.connect(this.audioDestination);
+        }
       } catch (e) {
         console.warn('Error setting up mic audio source:', e);
       }
+    } else {
+      this.micAnalyser = null;
     }
 
     // System audio source
@@ -399,10 +408,14 @@ export class RecorderEngine {
         this.systemAnalyser.fftSize = 64;
 
         sysSource.connect(this.systemAnalyser);
-        sysSource.connect(this.audioDestination);
+        if (this.systemAudioEnabled) {
+          sysSource.connect(this.audioDestination);
+        }
       } catch (e) {
         console.warn('Error setting up system audio source:', e);
       }
+    } else {
+      this.systemAnalyser = null;
     }
 
     // Level check interval for Audio Visualizer component
@@ -410,14 +423,14 @@ export class RecorderEngine {
       let micLevel = 0;
       let systemLevel = 0;
 
-      if (this.micAnalyser) {
+      if (this.micAnalyser && this.micAudioEnabled) {
         const data = new Uint8Array(this.micAnalyser.frequencyBinCount);
         this.micAnalyser.getByteFrequencyData(data);
         const sum = data.reduce((acc, val) => acc + val, 0);
         micLevel = Math.min(100, Math.round((sum / data.length / 255) * 200));
       }
 
-      if (this.systemAnalyser) {
+      if (this.systemAnalyser && this.systemAudioEnabled) {
         const data = new Uint8Array(this.systemAnalyser.frequencyBinCount);
         this.systemAnalyser.getByteFrequencyData(data);
         const sum = data.reduce((acc, val) => acc + val, 0);
@@ -428,8 +441,8 @@ export class RecorderEngine {
         this.onAudioLevels({
           micLevel,
           systemLevel,
-          micActive: !!this.micAudioTrack,
-          systemActive: !!this.systemAudioTrack,
+          micActive: this.micAudioEnabled && !!this.micAudioTrack,
+          systemActive: this.systemAudioEnabled && !!this.systemAudioTrack,
         });
       }
     }, 100);
@@ -574,7 +587,8 @@ export class RecorderEngine {
       }
     }
 
-    if (this.audioEnabled && this.audioDestination) {
+    const hasAnyAudio = this.micAudioEnabled || this.systemAudioEnabled;
+    if (hasAnyAudio && this.audioDestination) {
       const audioTracks = this.audioDestination.stream.getAudioTracks();
       if (audioTracks.length > 0) {
         combinedTracks.push(audioTracks[0]);

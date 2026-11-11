@@ -1,17 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Camera, CameraOff, Monitor, RefreshCw, Layers, CheckCircle2, ShieldCheck, Play, Trash2, ExternalLink, AlertTriangle, Video, Volume2, VolumeX, Mic, MicOff } from 'lucide-react';
-import { CameraConfig, RecordingState } from '../types';
+import { AudioSourceConfig, CameraConfig, RecordingState } from '../types';
 
 interface RecordingViewportProps {
   recordingState: RecordingState;
   cameraConfig: CameraConfig;
-  audioEnabled: boolean;
+  audioConfig: AudioSourceConfig;
   videoDevices?: MediaDeviceInfo[];
   previewUrl: string | null;
   canvasElement: HTMLCanvasElement | null;
   captureError?: string | null;
   onToggleCamera: () => void;
-  onToggleAudio: () => void;
+  onToggleMicAudio: () => void;
+  onToggleSystemAudio: () => void;
   onChangeCameraPos: (pos: CameraConfig['position']) => void;
   onChangeCameraShape: (shape: CameraConfig['shape']) => void;
   onChangeCameraDevice?: (deviceId: string) => void;
@@ -122,13 +123,14 @@ const LiveCameraPreviewBubble: React.FC<{ cameraConfig: CameraConfig }> = ({ cam
 export const RecordingViewport: React.FC<RecordingViewportProps> = ({
   recordingState,
   cameraConfig,
-  audioEnabled,
+  audioConfig,
   videoDevices = [],
   previewUrl,
   canvasElement,
   captureError,
   onToggleCamera,
-  onToggleAudio,
+  onToggleMicAudio,
+  onToggleSystemAudio,
   onChangeCameraPos,
   onChangeCameraShape,
   onChangeCameraDevice,
@@ -180,12 +182,35 @@ export const RecordingViewport: React.FC<RecordingViewportProps> = ({
 
         <div className="flex items-center gap-2">
           <span className={`bg-black/70 backdrop-blur px-2.5 py-1.5 rounded-lg text-[10px] font-mono tracking-wider border flex items-center gap-1.5 ${
-            audioEnabled
+            audioConfig.systemEnabled && audioConfig.micEnabled
               ? 'text-emerald-400 border-emerald-500/30'
+              : audioConfig.systemEnabled
+              ? 'text-cyan-400 border-cyan-500/30'
+              : audioConfig.micEnabled
+              ? 'text-orange-400 border-orange-500/30'
               : 'text-amber-400 border-amber-500/30'
           }`}>
-            {audioEnabled ? <Volume2 className="w-3 h-3 text-emerald-400" /> : <VolumeX className="w-3 h-3 text-amber-400" />}
-            {audioEnabled ? 'SONIDO: ACTIVO' : 'SONIDO: OMITIDO'}
+            {audioConfig.systemEnabled && audioConfig.micEnabled ? (
+              <>
+                <Volume2 className="w-3 h-3 text-emerald-400" />
+                AUDIO: SISTEMA + MIC
+              </>
+            ) : audioConfig.systemEnabled ? (
+              <>
+                <Volume2 className="w-3 h-3 text-cyan-400" />
+                AUDIO: SÓLO SISTEMA
+              </>
+            ) : audioConfig.micEnabled ? (
+              <>
+                <Mic className="w-3 h-3 text-orange-400" />
+                AUDIO: SÓLO MIC
+              </>
+            ) : (
+              <>
+                <VolumeX className="w-3 h-3 text-amber-400" />
+                AUDIO: SILENCIOSO
+              </>
+            )}
           </span>
           <span className="bg-black/70 backdrop-blur px-3 py-1.5 rounded-lg text-[10px] font-mono text-white/80 tracking-widest border border-white/10 hidden sm:inline-block">
             WEBM / VP9 + OPUS
@@ -287,22 +312,44 @@ export const RecordingViewport: React.FC<RecordingViewportProps> = ({
       {/* Camera & Audio Controls Bar */}
       <div className="bg-zinc-950/90 border-t border-zinc-800/80 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs z-10">
         <div className="flex items-center gap-2 flex-wrap">
+          {/* System Audio Toggle */}
           <button
-            onClick={onToggleAudio}
-            title={audioEnabled ? 'Omitir o deshabilitar captura de audio' : 'Habilitar captura de audio (micrófono y sistema)'}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono text-[11px] transition-all border ${
-              audioEnabled
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-                : 'bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20'
+            onClick={onToggleSystemAudio}
+            title={audioConfig.systemEnabled ? 'Desactivar audio de la computadora/sistema' : 'Activar audio de la computadora/sistema'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-[11px] transition-all border ${
+              audioConfig.systemEnabled
+                ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/20'
+                : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:text-zinc-300'
             }`}
           >
-            {audioEnabled ? (
+            {audioConfig.systemEnabled ? (
               <>
-                <Volume2 className="w-3.5 h-3.5" /> AUDIO ON
+                <Volume2 className="w-3.5 h-3.5 text-cyan-400" /> SISTEMA ON
               </>
             ) : (
               <>
-                <VolumeX className="w-3.5 h-3.5" /> AUDIO OFF (SIN SONIDO)
+                <VolumeX className="w-3.5 h-3.5 text-zinc-500" /> SISTEMA OFF
+              </>
+            )}
+          </button>
+
+          {/* Mic Audio Toggle */}
+          <button
+            onClick={onToggleMicAudio}
+            title={audioConfig.micEnabled ? 'Desactivar audio del micrófono' : 'Activar audio del micrófono'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-[11px] transition-all border ${
+              audioConfig.micEnabled
+                ? 'bg-orange-500/10 text-orange-400 border-orange-500/30 hover:bg-orange-500/20'
+                : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:text-zinc-300'
+            }`}
+          >
+            {audioConfig.micEnabled ? (
+              <>
+                <Mic className="w-3.5 h-3.5 text-orange-400" /> MIC ON
+              </>
+            ) : (
+              <>
+                <MicOff className="w-3.5 h-3.5 text-zinc-500" /> MIC OFF
               </>
             )}
           </button>
